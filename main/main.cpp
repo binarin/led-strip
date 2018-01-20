@@ -46,12 +46,12 @@ void blink_task(void *pvParameter)
 }
 
 void init_strip() {
-  static struct led_color_t buf_1[1];
-  static struct led_color_t buf_2[1];
+  static struct led_color_t buf_1[2];
+  static struct led_color_t buf_2[2];
 
   static struct led_strip_t strip = {
     .rgb_led_type = RGB_LED_TYPE_WS2812,
-    .led_strip_length = 1,
+    .led_strip_length = 2,
     .rmt_channel = RMT_CHANNEL_0,
     .rmt_interrupt_num = 20,
     .gpio = GPIO_NUM_15,
@@ -74,6 +74,11 @@ void init_strip() {
     .blue = 0
   };
   led_strip_set_pixel_color(&strip, 0, &red);
+
+  red.red = 0;
+  red.green = 255;
+  led_strip_set_pixel_color(&strip, 1, &red);
+
   led_strip_show(&strip);
 }
 
