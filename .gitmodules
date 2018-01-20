@@ -1,0 +1,6 @@
+[submodule "external/led-strip"]
+	path = external/led-strip
+	url = https://github.com/binarin/ESP32_LED_STRIP
+[submodule "components/espmqtt"]
+	path = components/espmqtt
+	url = https://github.com/tuanpmt/espmqtt
