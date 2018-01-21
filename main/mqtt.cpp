@@ -5,6 +5,8 @@
 #include "mqtt.hpp"
 #include "led_strip.hpp"
 
+#include <cJSON.h>
+
 namespace {
   const char* STATE_TOPIC = "home/office/" ENV_DEVICE_ID;
   const char* COMMAND_TOPIC = "home/office/" ENV_DEVICE_ID "/set";
@@ -15,8 +17,31 @@ namespace {
   const char* PAYLOAD_OFF = "OFF";
 
   void publish_led_state(mqtt_client* client) {
-    const char* statePayload = LedStrip::isOn() ? PAYLOAD_ON : PAYLOAD_OFF;
-    mqtt_publish(client, STATE_TOPIC, statePayload, strlen(statePayload), 0, 1);
+    cJSON *payload = cJSON_CreateObject();
+    if (!payload) {
+      ESP_LOGE("mqtt", "Failed to create json payload object");
+      return;
+    }
+    goto start;
+
+  end:
+    cJSON_Delete(payload);
+    return;
+
+  start:
+    cJSON *state = cJSON_CreateString(LedStrip::isOn() ? PAYLOAD_ON : PAYLOAD_OFF);
+    if (!state) {
+      ESP_LOGE("mqtt", "Failed to create json state string");
+      goto end;
+    }
+
+    cJSON_AddItemToObject(payload, "state", state);
+
+    const char* serializedPayload = cJSON_Print(payload);
+    mqtt_publish(client, STATE_TOPIC, serializedPayload, strlen(serializedPayload), 0, 1);
+    ESP_LOGI("mqtt", "Serialized state: %s", serializedPayload);
+    free((void*)serializedPayload);
+    goto end;
   }
 
 
@@ -36,6 +61,45 @@ namespace {
   void publish_cb(mqtt_client* client, mqtt_event_data_t *event_data) {
   }
 
+  uint8_t clamp(int intVal) {
+    if (intVal > 255) {
+      return 255;
+    }
+    if (intVal < 0) {
+      return 0;
+    }
+    return intVal;
+  }
+
+  void process_json(cJSON *json) {
+    cJSON *state = cJSON_GetObjectItemCaseSensitive(json, "state");
+    if (cJSON_IsString(state) && (state->valuestring != nullptr)) {
+      ESP_LOGI("mqtt", "Got state request: %s", state->valuestring);
+      if (!strcmp(state->valuestring, PAYLOAD_ON)) {
+        if (!LedStrip::isOn()) {
+          ESP_LOGI("mqtt", "State mismatch, turning on");
+          LedStrip::turnOn();
+        }
+      } else if (!strcmp(state->valuestring, PAYLOAD_OFF)) {
+        if (LedStrip::isOn()) {
+          ESP_LOGI("mqtt", "State mismatch, turning off");
+          LedStrip::turnOff();
+        }
+      }
+    }
+    cJSON *color = cJSON_GetObjectItemCaseSensitive(json, "color");
+    if (cJSON_IsObject(color)) {
+      ESP_LOGI("mqtt", "Got color request");
+      cJSON *jRed = cJSON_GetObjectItemCaseSensitive(color, "r");
+      cJSON *jGreen = cJSON_GetObjectItemCaseSensitive(color, "g");
+      cJSON *jBlue = cJSON_GetObjectItemCaseSensitive(color, "b");
+      if (cJSON_IsNumber(jRed) && cJSON_IsNumber(jGreen) && cJSON_IsNumber(jBlue)) {
+        ESP_LOGI("mqtt", "Color request is valid, executing");
+        LedStrip::setColor(clamp(jRed->valueint), clamp(jGreen->valueint), clamp(jBlue->valueint));
+      }
+    }
+  }
+
   void data_cb(mqtt_client *client, mqtt_event_data_t *event_data) {
     if(event_data->data_offset == 0) {
       char *topic = (char*)malloc(event_data->topic_length + 1);
@@ -48,12 +112,13 @@ namespace {
     char *data = (char*)malloc(event_data->data_length + 1);
     memcpy(data, event_data->data, event_data->data_length);
     data[event_data->data_length] = 0;
-    if (!strcmp(data, PAYLOAD_ON)) {
-      LedStrip::turnOn();
-    } else if (!strcmp(data, PAYLOAD_OFF)) {
-      LedStrip::turnOff();
+    cJSON *json = cJSON_Parse(data);
+    if (!cJSON_IsInvalid(json)) {
+      ESP_LOGI("mqtt", "Got valid json");
+      process_json(json);
     }
     publish_led_state(client);
+    cJSON_Delete(json);
 
     ESP_LOGI("mqtt", "[APP] Publish data[%d/%d bytes]: %s",
              event_data->data_length + event_data->data_offset,
